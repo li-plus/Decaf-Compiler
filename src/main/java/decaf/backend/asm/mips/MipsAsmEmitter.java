@@ -67,8 +67,7 @@ public final class MipsAsmEmitter extends AsmEmitter {
             instr.accept(selector);
         }
 
-        var info = new SubroutineInfo(func.entry, func.numArgs, selector.hasCall,
-                Math.max(func.numArgs, selector.maxArgs) * 4);
+        var info = new SubroutineInfo(func.entry, func.numArgs, selector.hasCall, selector.maxArgs * 4);
         return Pair.of(selector.seq, info);
     }
 

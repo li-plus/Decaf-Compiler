@@ -107,9 +107,10 @@ public final class Simulator {
         var count = 0;
         _halt = false;
 
+        var line_limit = 10000000;
         while (!_call_stack.isEmpty()) {
-            if (count >= 100000) {
-                throw new Error("Max instruction limitation 10,0000 exceeds, maybe your program cannot terminate?");
+            if (count >= line_limit) {
+                throw new Error("Max instruction limitation " + line_limit + " exceeds, maybe your program cannot terminate?");
             }
 
             if (_halt) {

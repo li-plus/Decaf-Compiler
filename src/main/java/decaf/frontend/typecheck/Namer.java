@@ -5,6 +5,7 @@ import decaf.driver.Phase;
 import decaf.driver.error.*;
 import decaf.frontend.scope.*;
 import decaf.frontend.symbol.ClassSymbol;
+import decaf.frontend.symbol.LambdaSymbol;
 import decaf.frontend.symbol.MethodSymbol;
 import decaf.frontend.symbol.VarSymbol;
 import decaf.frontend.tree.Tree;
@@ -13,10 +14,7 @@ import decaf.frontend.type.ClassType;
 import decaf.frontend.type.FunType;
 import decaf.frontend.type.Type;
 
-import java.util.ArrayList;
-import java.util.Map;
-import java.util.Optional;
-import java.util.TreeMap;
+import java.util.*;
 
 /**
  * The namer phase: resolve all symbols defined in the abstract syntax tree and store them in symbol tables (i.e.
@@ -88,6 +86,9 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
         boolean found = false;
         for (var clazz : classes.values()) {
             if (clazz.name.equals("Main")) {
+                if (clazz.modifiers.isAbstract()) {
+                    issue(new NoMainClassError());
+                }
                 var symbol = clazz.symbol.scope.find("main");
                 if (symbol.isPresent() && symbol.get().isMethodSymbol()) {
                     var method = (MethodSymbol) symbol.get();
@@ -158,13 +159,13 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
             var base = global.getClass(clazz.parent.get().name);
             var type = new ClassType(clazz.name, base.type);
             var scope = new ClassScope(base.scope);
-            var symbol = new ClassSymbol(clazz.name, base, type, scope, clazz.pos);
+            var symbol = new ClassSymbol(clazz.name, base, type, scope, clazz.pos, clazz.modifiers);
             global.declare(symbol);
             clazz.symbol = symbol;
         } else {
             var type = new ClassType(clazz.name);
             var scope = new ClassScope();
-            var symbol = new ClassSymbol(clazz.name, type, scope, clazz.pos);
+            var symbol = new ClassSymbol(clazz.name, type, scope, clazz.pos, clazz.modifiers);
             global.declare(symbol);
             clazz.symbol = symbol;
         }
@@ -176,12 +177,21 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
 
         if (clazz.hasParent()) {
             clazz.superClass.accept(this, ctx);
+            clazz.abstractMethods = new ArrayList<>(clazz.superClass.abstractMethods);
         }
 
         ctx.open(clazz.symbol.scope);
         for (var field : clazz.fields) {
+            if (field instanceof Tree.MethodDef) {
+                ((Tree.MethodDef) field).owner = clazz;
+            }
             field.accept(this, ctx);
         }
+
+        if (!clazz.abstractMethods.isEmpty() && !clazz.modifiers.isAbstract()) {
+            issue(new BadAbstractClassError(clazz.pos, clazz.name));
+        }
+
         ctx.close();
         clazz.resolved = true;
     }
@@ -213,12 +223,21 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
     }
 
     @Override
+    public void visitCall(Tree.Call call, ScopeStack ctx) {
+        call.expr.accept(this, ctx);
+        for (var arg : call.args) {
+            arg.accept(this, ctx);
+        }
+    }
+
+    @Override
     public void visitMethodDef(Tree.MethodDef method, ScopeStack ctx) {
         var earlier = ctx.findConflict(method.name);
         if (earlier.isPresent()) {
             if (earlier.get().isMethodSymbol()) { // may be overriden
                 var suspect = (MethodSymbol) earlier.get();
-                if (suspect.domain() != ctx.currentScope() && !suspect.isStatic() && !method.isStatic()) {
+                if (suspect.domain() != ctx.currentScope() && !suspect.isStatic() && !method.isStatic() &&
+                        !(method.modifiers.isAbstract() && !suspect.modifiers.isAbstract())) {
                     // Only non-static methods can be overriden, but the type signature must be equivalent.
                     var formal = new FormalScope();
                     typeMethod(method, ctx, formal);
@@ -227,9 +246,16 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
                                 ctx.currentClass());
                         ctx.declare(symbol);
                         method.symbol = symbol;
+
                         ctx.open(formal);
-                        method.body.accept(this, ctx);
+                        if (method.body.isPresent()) {
+                            method.body.get().accept(this, ctx);
+                        }
                         ctx.close();
+
+                        if (suspect.modifiers.isAbstract() && !method.modifiers.isAbstract()) {
+                            method.owner.abstractMethods.removeIf(s -> s.equals(suspect.name));
+                        }
                     } else {
                         issue(new BadOverrideError(method.pos, method.name, suspect.owner.name));
                     }
@@ -248,9 +274,16 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
                 ctx.currentClass());
         ctx.declare(symbol);
         method.symbol = symbol;
+
         ctx.open(formal);
-        method.body.accept(this, ctx);
+        if (method.body.isPresent()) {
+            method.body.get().accept(this, ctx);
+        }
         ctx.close();
+
+        if (method.modifiers.isAbstract()) {
+            method.owner.abstractMethods.add(method.symbol.name);
+        }
     }
 
     private void typeMethod(Tree.MethodDef method, ScopeStack ctx, FormalScope formal) {
@@ -260,7 +293,9 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
         var argTypes = new ArrayList<Type>();
         for (var param : method.params) {
             param.accept(this, ctx);
-            argTypes.add(param.typeLit.type);
+            if (param.typeLit.isPresent()) {
+                argTypes.add(param.typeLit.get().type);
+            }
         }
         method.type = new FunType(method.returnType.type, argTypes);
         ctx.close();
@@ -278,24 +313,64 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
 
     @Override
     public void visitLocalVarDef(Tree.LocalVarDef def, ScopeStack ctx) {
-        def.typeLit.accept(this, ctx);
+        if (def.typeLit.isPresent()) {
+            def.typeLit.get().accept(this, ctx);
+        }
 
         var earlier = ctx.findConflict(def.name);
         if (earlier.isPresent()) {
             issue(new DeclConflictError(def.pos, def.name, earlier.get().pos));
-            return;
         }
 
-        if (def.typeLit.type.eq(BuiltInType.VOID)) {
-            issue(new BadVarTypeError(def.pos, def.name));
-            return;
+        if (def.typeLit.isPresent()) {
+            if (def.typeLit.get().type.eq(BuiltInType.VOID)) {
+                issue(new BadVarTypeError(def.pos, def.name));
+                return;
+            }
         }
 
-        if (def.typeLit.type.noError()) {
-            var symbol = new VarSymbol(def.name, def.typeLit.type, def.id.pos);
+        if (def.typeLit.isPresent()) {
+            // int a = 1;
+            if (def.typeLit.get().type.noError()) {
+                var symbol = new VarSymbol(def.name, def.typeLit.get().type, def.id.pos);
+                ctx.declare(symbol);
+                def.symbol = symbol;
+                if (def.initVal.isPresent()) {
+                    def.initVal.get().accept(this, ctx);
+                }
+            }
+        } else {
+            // var a = 1;
+            var symbol = new VarSymbol(def.name, BuiltInType.NULL, def.id.pos);
             ctx.declare(symbol);
             def.symbol = symbol;
+            if (def.initVal.isPresent()) {
+                def.initVal.get().accept(this, ctx);
+            }
         }
+    }
+
+    @Override
+    public void visitAssign(Tree.Assign assign, ScopeStack ctx) {
+        assign.lhs.accept(this, ctx);
+        assign.rhs.accept(this, ctx);
+    }
+
+    @Override
+    public void visitIndexSel(Tree.IndexSel indexSel, ScopeStack ctx) {
+        indexSel.array.accept(this, ctx);
+        indexSel.index.accept(this, ctx);
+    }
+
+    @Override
+    public void visitBinary(Tree.Binary binary, ScopeStack ctx) {
+        binary.lhs.accept(this, ctx);
+        binary.rhs.accept(this, ctx);
+    }
+
+    @Override
+    public void visitUnary(Tree.Unary unary, ScopeStack ctx) {
+        unary.operand.accept(this, ctx);
     }
 
     @Override
@@ -320,4 +395,86 @@ public class Namer extends Phase<Tree.TopLevel, Tree.TopLevel> implements TypeLi
         loop.body.accept(this, ctx);
     }
 
+    @Override
+    public void visitExprEval(Tree.ExprEval eval, ScopeStack ctx) {
+        eval.expr.accept(this, ctx);
+    }
+
+    @Override
+    public void visitNewArray(Tree.NewArray newArray, ScopeStack ctx) {
+        newArray.elemType.accept(this, ctx);
+        newArray.length.accept(this, ctx);
+    }
+
+    @Override
+    public void visitReturn(Tree.Return stmt, ScopeStack ctx) {
+        if (stmt.expr.isPresent()) {
+            stmt.expr.get().accept(this, ctx);
+        }
+    }
+
+    @Override
+    public void visitPrint(Tree.Print print, ScopeStack ctx) {
+        for (var expr : print.exprs) {
+            expr.accept(this, ctx);
+        }
+    }
+
+    @Override
+    public void visitVarSel(Tree.VarSel varSel, ScopeStack ctx) {
+        varSel.receiver.ifPresent(objects -> objects.accept(this, ctx));
+    }
+
+    @Override
+    public void visitClassTest(Tree.ClassTest classTest, ScopeStack ctx) {
+        classTest.obj.accept(this, ctx);
+    }
+
+    @Override
+    public void visitClassCast(Tree.ClassCast classCast, ScopeStack ctx) {
+        classCast.obj.accept(this, ctx);
+    }
+
+    @Override
+    public void visitLambdaExpr(Tree.LambdaExpr expr, ScopeStack ctx) {
+
+        var lambdaScope = new LambdaScope((LocalScope) ctx.currentScope());
+        var funType = typeLambda(expr.params, ctx, lambdaScope);
+
+        var symbol = new LambdaSymbol("lambda@" + expr.pos, funType, lambdaScope, expr.pos);
+        expr.symbol = symbol;
+        ctx.declare(symbol);
+        ctx.open(lambdaScope);
+        ctx.open(new LocalScope(ctx.currentScope()));
+        expr.body.accept(this, ctx);
+        ctx.close();
+        ctx.close();
+    }
+
+    @Override
+    public void visitLambdaBlock(Tree.LambdaBlock expr, ScopeStack ctx) {
+        var lambdaScope = new LambdaScope((LocalScope) ctx.currentScope());
+        var funType = typeLambda(expr.params, ctx, lambdaScope);
+
+        var symbol = new LambdaSymbol("lambda@" + expr.pos, funType, lambdaScope, expr.pos);
+        ctx.declare(symbol);
+        expr.symbol = symbol;
+
+        ctx.open(lambdaScope);
+        expr.body.accept(this, ctx);
+        ctx.close();
+    }
+
+    private FunType typeLambda(List<Tree.LocalVarDef> params, ScopeStack ctx, LambdaScope lambdaScope) {
+        ctx.open(lambdaScope);
+        var argTypes = new ArrayList<Type>();
+        for (var param : params) {
+            param.accept(this, ctx);
+            if (param.typeLit.isPresent()) {
+                argTypes.add(param.typeLit.get().type);
+            }
+        }
+        ctx.close();
+        return new FunType(BuiltInType.NULL, argTypes);
+    }
 }

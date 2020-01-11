@@ -67,6 +67,9 @@ BAD_ESC             = "\\"[^nrt\"\\]
 "ReadLine"          { return keyword(Tokens.READ_LINE);    }
 "static"            { return keyword(Tokens.STATIC);       }
 "instanceof"        { return keyword(Tokens.INSTANCE_OF);  }
+"abstract"          { return keyword(Tokens.ABSTRACT);     }
+"var"               { return keyword(Tokens.VAR);          }
+"fun"               { return keyword(Tokens.FUN);          }
 
     // operators, with more than one character
 "<="                { return operator(Tokens.LESS_EQUAL);    }
@@ -75,6 +78,7 @@ BAD_ESC             = "\\"[^nrt\"\\]
 "!="                { return operator(Tokens.NOT_EQUAL);     }
 "&&"                { return operator(Tokens.AND);           }
 "||"                { return operator(Tokens.OR);            }
+"=>"                { return operator(Tokens.LAMBDA_ARROW);  }
 {SIMPLE_OPERATOR}   { return operator((int) yycharat(0));    }
 
     // literals

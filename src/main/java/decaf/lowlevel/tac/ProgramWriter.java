@@ -1,5 +1,6 @@
 package decaf.lowlevel.tac;
 
+import decaf.frontend.tacgen.TacGen;
 import decaf.lowlevel.label.FuncLabel;
 import decaf.lowlevel.label.Label;
 
@@ -26,12 +27,30 @@ public class ProgramWriter {
      */
     public void visitVTables() {
         // Allocate labels for every method, including the constructor <init>, which initializes an object.
+        ctx.putFuncLabel(TacGen.globalVTable, TacGen.arrayLength);
+
         for (var clazz : classes.values()) {
             ctx.putConstructorLabel(clazz.name);
             for (var method : clazz.methods) {
                 ctx.putFuncLabel(clazz.name, method);
+                ctx.putFuncLabel(clazz.name, TacGen.wrapMethod(method));
             }
         }
+
+        // Build global virtual table.
+        var vtbl = new VTable(TacGen.globalVTable, Optional.empty());
+        for (var clazz : classes.values()) {
+            for (var method : clazz.staticMethods) {
+                if (!(method.equals("main") && clazz.name.equals("Main"))) {
+                    vtbl.memberMethods.add(ctx.getFuncLabel(clazz.name, method));
+                    vtbl.memberMethods.add(ctx.getFuncLabel(clazz.name, TacGen.wrapMethod(method)));
+                }
+            }
+        }
+        // put array length into global virtual table
+        vtbl.memberMethods.add(ctx.getFuncLabel(TacGen.globalVTable, TacGen.arrayLength));
+        ctx.putVTable(vtbl);
+        ctx.putOffsets(vtbl);
 
         // Build virtual tables.
         for (var clazz : classes.values()) {
@@ -75,7 +94,7 @@ public class ProgramWriter {
 
     private HashMap<String, ClassInfo> classes = new HashMap<>();
 
-    private Context ctx = new Context();
+    public Context ctx = new Context();
 
     /**
      * Emit code for initializing a new object. In memory, an object takes 4 * (1 + number of member variables) bytes,
@@ -126,6 +145,7 @@ public class ProgramWriter {
         // 3. newly declared in this class
         for (var method : clazz.memberMethods) {
             vtbl.memberMethods.add(ctx.getFuncLabel(clazz.name, method));
+            vtbl.memberMethods.add(ctx.getFuncLabel(clazz.name, TacGen.wrapMethod(method)));
         }
 
         // Similarly, member variables consist of ones that are:
@@ -146,7 +166,7 @@ public class ProgramWriter {
         ctx.putOffsets(vtbl);
     }
 
-    class Context {
+    public class Context {
 
         void putConstructorLabel(String clazz) {
             putFuncLabel(clazz, "new");
@@ -156,11 +176,11 @@ public class ProgramWriter {
             return getFuncLabel(clazz, "new");
         }
 
-        void putFuncLabel(String clazz, String method) {
+        public void putFuncLabel(String clazz, String method) {
             labels.put(clazz + "." + method, new FuncLabel(clazz, method));
         }
 
-        FuncLabel getFuncLabel(String clazz, String method) {
+        public FuncLabel getFuncLabel(String clazz, String method) {
             return labels.get(clazz + "." + method);
         }
 
@@ -170,7 +190,7 @@ public class ProgramWriter {
             return new Label(name);
         }
 
-        VTable getVTable(String clazz) {
+        public VTable getVTable(String clazz) {
             return vtables.get(clazz);
         }
 
@@ -178,7 +198,7 @@ public class ProgramWriter {
             return vtables.containsKey(clazz);
         }
 
-        void putVTable(VTable vtbl) {
+        public void putVTable(VTable vtbl) {
             vtables.put(vtbl.className, vtbl);
         }
 
@@ -186,22 +206,24 @@ public class ProgramWriter {
             return new ArrayList<>(vtables.values());
         }
 
-        int getOffset(String clazz, String member) {
-            return offsets.get(clazz + "." + member);
+        public int getOffset(String tableName, String clazz, String member) {
+            return offsets.get(tableName + "." + clazz + "." + member);
         }
 
-        void putOffsets(VTable vtbl) {
-            var prefix = vtbl.className + ".";
+        public int getOffset(String clazz, String member) {
+            return getOffset(clazz, clazz, member);
+        }
 
+        public void putOffsets(VTable vtbl) {
             var offset = 8;
             for (var l : vtbl.memberMethods) {
-                offsets.put(prefix + l.method, offset);
+                offsets.put(vtbl.className + "." + l.clazz + "." + l.method, offset);
                 offset += 4;
             }
 
             offset = 4;
             for (var variable : vtbl.memberVariables) {
-                offsets.put(prefix + variable, offset);
+                offsets.put(vtbl.className + "." + vtbl.className + "." + variable, offset);
                 offset += 4;
             }
         }

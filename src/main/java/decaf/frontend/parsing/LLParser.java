@@ -1,8 +1,8 @@
 package decaf.frontend.parsing;
 
+import decaf.driver.error.DecafError;
 import decaf.driver.Config;
 import decaf.driver.Phase;
-import decaf.driver.error.DecafError;
 import decaf.frontend.tree.Tree;
 import decaf.lowlevel.log.IndentPrinter;
 import decaf.printing.PrettyTree;
@@ -100,6 +100,10 @@ public class LLParser extends Phase<InputStream, Tree.TopLevel> {
                 case Tokens.GREATER_EQUAL -> GREATER_EQUAL;
                 case Tokens.EQUAL -> EQUAL;
                 case Tokens.NOT_EQUAL -> NOT_EQUAL;
+                case Tokens.ABSTRACT -> ABSTRACT;
+                case Tokens.VAR -> VAR;
+                case Tokens.FUN -> FUN;
+                case Tokens.LAMBDA_ARROW -> LAMBDA_ARROW;
                 default -> code; // single-character, use their ASCII code!
             };
         }
@@ -115,6 +119,23 @@ public class LLParser extends Phase<InputStream, Tree.TopLevel> {
          */
         private SemValue parseSymbol(int symbol, Set<Integer> follow) {
             var result = query(symbol, token); // get production by lookahead symbol
+
+            var beginA = beginSet(symbol);
+            var endA = followSet(symbol);
+            endA.addAll(follow);
+
+            if (!beginA.contains(token)) {
+                yyerror("syntax error");
+                while (true) {
+                    if (beginA.contains(token)) {
+                        result = query(symbol, token);
+                        break;
+                    } else if (endA.contains(token)) {
+                        return null;
+                    }
+                    token = nextToken();
+                }
+            }
             var actionId = result.getKey(); // get user-defined action
 
             var right = result.getValue(); // right-hand side of production
@@ -124,12 +145,14 @@ public class LLParser extends Phase<InputStream, Tree.TopLevel> {
             for (var i = 0; i < length; i++) { // parse right-hand side symbols one by one
                 var term = right.get(i);
                 params[i + 1] = isNonTerminal(term)
-                        ? parseSymbol(term, follow) // for non terminals: recursively parse it
+                        ? parseSymbol(term, endA) // for non terminals: recursively parse it
                         : matchToken(term) // for terminals: match token
                 ;
             }
 
-            act(actionId, params); // do user-defined action
+            if (errors.isEmpty()) {
+                act(actionId, params); // do user-defined action
+            }
             return params[0];
         }
 

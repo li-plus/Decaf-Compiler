@@ -1,5 +1,7 @@
 # The New Decaf Compiler
 
+[![Build Status](https://travis-ci.org/li-plus/Decaf-Compiler.svg?branch=master)](https://travis-ci.org/li-plus/Decaf-Compiler)
+
 <img src="https://github.com/decaf-lang/decaf/wiki/images/decaf-logo-h.svg?sanitize=true" width="300" align=center></img>
 
 Decaf is a Java-like, but much smaller programming language mainly for educational purpose.

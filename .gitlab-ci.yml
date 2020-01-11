@@ -1,0 +1,18 @@
+stages:
+  - test
+
+test:
+  image: gradle:jdk12
+
+  before_script:
+    - gradle clean && gradle build
+    - apt-get update -qq && apt-get install -y -qq python3 spim
+    - git clone https://github.com/decaf-lang/decaf-2019-TestCases TestCases
+  script:
+    - cd TestCases
+    - python3 testAll.py PA1-A
+    - python3 testAll.py PA1-B
+    - python3 testAll.py PA2
+    - python3 testAll.py PA3
+    - python3 testAll.py PA4
+    - python3 testAll.py PA5

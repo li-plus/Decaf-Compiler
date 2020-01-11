@@ -1,8 +1,12 @@
 package decaf.frontend.tacgen;
 
+import decaf.frontend.symbol.LambdaSymbol;
+import decaf.frontend.symbol.MethodSymbol;
+import decaf.frontend.symbol.VarSymbol;
 import decaf.frontend.tree.Tree;
 import decaf.frontend.tree.Visitor;
 import decaf.frontend.type.BuiltInType;
+import decaf.frontend.type.FunType;
 import decaf.lowlevel.instr.Temp;
 import decaf.lowlevel.label.Label;
 import decaf.lowlevel.tac.FuncVisitor;
@@ -33,6 +37,8 @@ public interface TacEmitter extends Visitor<FuncVisitor> {
      */
     Stack<Label> loopExits = new Stack<>();
 
+    Stack<LambdaSymbol> lambdaStack = new Stack<>();
+
     @Override
     default void visitBlock(Tree.Block block, FuncVisitor mv) {
         for (var stmt : block.stmts) {
@@ -61,14 +67,17 @@ public interface TacEmitter extends Visitor<FuncVisitor> {
             mv.visitStoreTo(addr, assign.rhs.val);
         } else if (assign.lhs instanceof Tree.VarSel) {
             var v = (Tree.VarSel) assign.lhs;
-            if (v.symbol.isMemberVar()) {
-                var object = v.receiver.get();
-                object.accept(this, mv);
-                assign.rhs.accept(this, mv);
-                mv.visitMemberWrite(object.val, v.symbol.getOwner().name, v.name, assign.rhs.val);
-            } else { // local or param
-                assign.rhs.accept(this, mv);
-                mv.visitAssign(v.symbol.temp, assign.rhs.val);
+            if (v.symbol.isVarSymbol()) {
+                var var = (VarSymbol) v.symbol;
+                if (var.isMemberVar()) {
+                    var object = v.receiver.get();
+                    object.accept(this, mv);
+                    assign.rhs.accept(this, mv);
+                    mv.visitMemberWrite(object.val, var.getOwner().name, v.name, assign.rhs.val);
+                } else { // local or param
+                    assign.rhs.accept(this, mv);
+                    mv.visitAssign(var.temp, assign.rhs.val);
+                }
             }
         }
     }
@@ -233,17 +242,80 @@ public interface TacEmitter extends Visitor<FuncVisitor> {
         };
         expr.lhs.accept(this, mv);
         expr.rhs.accept(this, mv);
+
+        if (op == TacInstr.Binary.Op.DIV || op == TacInstr.Binary.Op.MOD) {
+            var zero = mv.visitLoad(0);
+            var error = mv.visitBinary(TacInstr.Binary.Op.EQU, expr.rhs.val, zero);
+            var handler = new Consumer<FuncVisitor>() {
+                @Override
+                public void accept(FuncVisitor v) {
+                    v.visitPrint(RuntimeError.DIVISION_BY_ZERO);
+                    v.visitIntrinsicCall(Intrinsic.HALT);
+                }
+            };
+            emitIfThen(error, handler, mv);
+        }
+
         expr.val = mv.visitBinary(op, expr.lhs.val, expr.rhs.val);
     }
 
     @Override
     default void visitVarSel(Tree.VarSel expr, FuncVisitor mv) {
-        if (expr.symbol.isMemberVar()) {
-            var object = expr.receiver.get();
-            object.accept(this, mv);
-            expr.val = mv.visitMemberAccess(object.val, expr.symbol.getOwner().name, expr.name);
-        } else { // local or param
-            expr.val = expr.symbol.temp;
+        if (expr.isArrayLength) {
+            // create function object
+            var size = mv.visitLoad(8);
+            expr.val = mv.visitIntrinsicCall(Intrinsic.ALLOCATE, true, size);
+            // store func entry
+            var vtbl = mv.visitLoadVTable(TacGen.globalVTable);
+            var entry = mv.visitLoadFrom(vtbl, mv.ctx.getOffset(TacGen.globalVTable, TacGen.arrayLength));
+            mv.visitStoreTo(expr.val, entry);
+            // store array length
+            var array = expr.receiver.get();
+            array.accept(this, mv);
+            var length = mv.visitLoadFrom(array.val, -4);
+            mv.visitStoreTo(expr.val, 4, length);
+        } else if (expr.symbol.isVarSymbol()) {
+            var varSymbol = (VarSymbol) expr.symbol;
+            if (varSymbol.isMemberVar()) {
+                var object = expr.receiver.get();
+                object.accept(this, mv);
+                expr.val = mv.visitMemberAccess(object.val, varSymbol.getOwner().name, expr.name);
+            } else { // local or param
+                if (lambdaStack.isEmpty() || !lambdaStack.peek().capturedVars.contains(expr.name)) {
+                    // no capture
+                    expr.val = varSymbol.temp;
+                } else {
+                    // capture
+                    for (var lambdaSymbol : lambdaStack) {
+                        lambdaSymbol.capturedTemps.put(expr.name, varSymbol.temp);
+                    }
+                    var object = mv.getArgTemp(0);
+                    var index = lambdaStack.peek().capturedVars.indexOf(expr.name);
+                    expr.val = mv.visitLoadFrom(object, 4 + 4 * index);
+                }
+            }
+        } else if (expr.symbol.isMethodSymbol()) {
+            var method = (MethodSymbol) expr.symbol;
+
+            if (method.isStatic()) {
+                var size = mv.visitLoad(4);
+                expr.val = mv.visitIntrinsicCall(Intrinsic.ALLOCATE, true, size);
+                // store func pointer
+                var vtbl = mv.visitLoadVTable(TacGen.globalVTable);
+                var entry = mv.visitLoadFrom(vtbl, mv.ctx.getOffset(TacGen.globalVTable, method.owner.name, TacGen.wrapMethod(expr.name)));
+                mv.visitStoreTo(expr.val, entry);
+            } else {
+                var size = mv.visitLoad(8);
+                expr.val = mv.visitIntrinsicCall(Intrinsic.ALLOCATE, true, size);
+                // store func pointer
+                var object = expr.receiver.get();
+                object.accept(this, mv);
+                var vtbl = mv.visitLoadFrom(object.val);
+                var entry = mv.visitLoadFrom(vtbl, mv.ctx.getOffset(mv.className(), TacGen.wrapMethod(expr.name)));
+                mv.visitStoreTo(expr.val, entry);
+                // store object
+                mv.visitStoreTo(expr.val, 4, expr.receiver.get().val);
+            }
         }
     }
 
@@ -268,13 +340,22 @@ public interface TacEmitter extends Visitor<FuncVisitor> {
 
     @Override
     default void visitThis(Tree.This expr, FuncVisitor mv) {
-        expr.val = mv.getArgTemp(0);
+        if (lambdaStack.isEmpty()) {
+            expr.val = mv.getArgTemp(0);
+        } else {
+            for (var lambdaSymbol : lambdaStack) {
+                lambdaSymbol.capturedTemps.put("this", mv.getArgTemp(0));
+            }
+            var index = lambdaStack.peek().capturedVars.indexOf("this");
+            var object = mv.getArgTemp(0);
+            expr.val = mv.visitLoadFrom(object, 4 + 4 * index);
+        }
     }
 
     @Override
     default void visitCall(Tree.Call expr, FuncVisitor mv) {
-        if (expr.isArrayLength) { // special case for array.length()
-            var array = expr.receiver.get();
+        if (expr.expr instanceof Tree.VarSel && ((Tree.VarSel) expr.expr).isArrayLength) { // special case for array.length()
+            var array = ((Tree.VarSel) expr.expr).receiver.get();
             array.accept(this, mv);
             expr.val = mv.visitLoadFrom(array.val, -4);
             return;
@@ -284,21 +365,116 @@ public interface TacEmitter extends Visitor<FuncVisitor> {
         var temps = new ArrayList<Temp>();
         expr.args.forEach(arg -> temps.add(arg.val));
 
-        if (expr.symbol.isStatic()) {
-            if (expr.symbol.type.returnType.isVoidType()) {
-                mv.visitStaticCall(expr.symbol.owner.name, expr.symbol.name, temps);
+        if (expr.expr instanceof Tree.VarSel && ((Tree.VarSel) expr.expr).symbol.isMethodSymbol()) {
+            var varSel = (Tree.VarSel) expr.expr;
+            var method = (MethodSymbol) varSel.symbol;
+            if (method.isStatic()) {
+                if (method.type.returnType.isVoidType()) {
+                    mv.visitStaticCall(method.owner.name, varSel.symbol.name, temps);
+                } else {
+                    expr.val = mv.visitStaticCall(method.owner.name, varSel.symbol.name, temps, true);
+                }
             } else {
-                expr.val = mv.visitStaticCall(expr.symbol.owner.name, expr.symbol.name, temps, true);
+                var object = varSel.receiver.get();
+                object.accept(this, mv);
+
+                if (method.type.returnType.isVoidType()) {
+                    mv.visitMemberCall(object.val, method.owner.name, varSel.symbol.name, temps);
+                } else {
+                    expr.val = mv.visitMemberCall(object.val, method.owner.name, varSel.symbol.name, temps, true);
+                }
             }
         } else {
-            var object = expr.receiver.get();
-            object.accept(this, mv);
-            if (expr.symbol.type.returnType.isVoidType()) {
-                mv.visitMemberCall(object.val, expr.symbol.owner.name, expr.symbol.name, temps);
-            } else {
-                expr.val = mv.visitMemberCall(object.val, expr.symbol.owner.name, expr.symbol.name, temps, true);
-            }
+            // call by lambda or method name
+            var funcType = (FunType) expr.expr.type;
+            expr.expr.accept(this, mv);
+
+            var needReturn = !funcType.returnType.isVoidType();
+            expr.val = mv.visitNonMemberCall(expr.expr.val, temps, needReturn);
         }
+    }
+
+    default void addToVTable(String clazz, String method) {
+        TacGen.pw.ctx.putFuncLabel(clazz, method);
+        var globalVTable = TacGen.pw.ctx.getVTable(clazz);
+        globalVTable.getItems().add(TacGen.pw.ctx.getFuncLabel(clazz, method));
+        TacGen.pw.ctx.putVTable(globalVTable);
+        TacGen.pw.ctx.putOffsets(globalVTable);
+    }
+
+    default void buildLambdaExprBody(Tree.LambdaExpr expr) {
+        var numArgs = expr.symbol.type.argTypes.size() + 1;
+        var mv = TacGen.pw.visitFunc(TacGen.globalVTable, TacGen.lambdaName(expr.symbol.pos), numArgs);
+
+        int i = 1;
+        for (var param : expr.params) {
+            param.symbol.temp = mv.getArgTemp(i);
+            i++;
+        }
+
+        expr.body.accept(this, mv);
+        mv.visitReturn(expr.body.val);
+        mv.visitEnd();
+    }
+
+    default void buildLambdaBlockBody(Tree.LambdaBlock expr) {
+        var numArgs = expr.symbol.type.argTypes.size() + 1;
+        var mv = TacGen.pw.visitFunc(TacGen.globalVTable, TacGen.lambdaName(expr.symbol.pos), numArgs);
+
+        int i = 1;
+        for (var param : expr.params) {
+            param.symbol.temp = mv.getArgTemp(i);
+            i++;
+        }
+
+        expr.body.accept(this, mv);
+        mv.visitEnd();
+    }
+
+    default Temp buildLambdaObject(LambdaSymbol lambdaSymbol, String lambdaName, FuncVisitor mv) {
+        var size = mv.visitLoad(4 + 4 * lambdaSymbol.capturedVars.size());
+        var object = mv.visitIntrinsicCall(Intrinsic.ALLOCATE, true, size);
+
+        // store entry
+        var vtbl = mv.visitLoadVTable(TacGen.globalVTable);
+        var entry = mv.visitLoadFrom(vtbl, mv.ctx.getOffset(TacGen.globalVTable, lambdaName));
+        mv.visitStoreTo(object, entry);
+        // store captured temps
+        var offset = 4;
+        for (var var : lambdaSymbol.capturedVars) {
+            Temp capturedTemp;
+            if (!lambdaStack.isEmpty() && lambdaStack.peek().capturedVars.contains(var)) {
+                var index = lambdaStack.peek().capturedVars.indexOf(var);
+                capturedTemp = mv.visitLoadFrom(mv.getArgTemp(0), 4 + 4 * index);
+            } else {
+                capturedTemp = lambdaSymbol.capturedTemps.get(var);
+            }
+            mv.visitStoreTo(object, offset, capturedTemp);
+            offset += 4;
+        }
+        return object;
+    }
+
+    @Override
+    default void visitLambdaExpr(Tree.LambdaExpr expr, FuncVisitor mv) {
+        addToVTable(TacGen.globalVTable, TacGen.lambdaName(expr.symbol.pos));
+
+        lambdaStack.push(expr.symbol);
+        buildLambdaExprBody(expr);
+        lambdaStack.pop();
+
+        expr.val = buildLambdaObject(expr.symbol, TacGen.lambdaName(expr.symbol.pos), mv);
+    }
+
+    @Override
+    default void visitLambdaBlock(Tree.LambdaBlock expr, FuncVisitor mv) {
+        addToVTable(TacGen.globalVTable, TacGen.lambdaName(expr.symbol.pos));
+
+        lambdaStack.push(expr.symbol);
+        buildLambdaBlockBody(expr);
+        lambdaStack.pop();
+
+        expr.val = buildLambdaObject(expr.symbol, TacGen.lambdaName(expr.symbol.pos), mv);
     }
 
     @Override

@@ -13,7 +13,7 @@ public class Loc<I extends PseudoInstr> {
     public Set<Temp> liveIn;
     public Set<Temp> liveOut;
 
-    Loc(I instr) {
+    public Loc(I instr) {
         this.instr = instr;
     }
 }

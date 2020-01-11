@@ -50,6 +50,18 @@ public interface Visitor<C> {
         visitOthers(that, ctx);
     }
 
+    default void visitTLambda(Tree.TLambda that, C ctx) {
+        visitOthers(that, ctx);
+    }
+
+    default void visitLambdaExpr(Tree.LambdaExpr that, C ctx) {
+        visitOthers(that, ctx);
+    }
+
+    default void visitLambdaBlock(Tree.LambdaBlock that, C ctx) {
+        visitOthers(that, ctx);
+    }
+
     default void visitLocalVarDef(Tree.LocalVarDef that, C ctx) {
         visitOthers(that, ctx);
     }

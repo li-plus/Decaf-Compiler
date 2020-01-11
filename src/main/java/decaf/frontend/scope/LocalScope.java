@@ -10,11 +10,13 @@ public class LocalScope extends Scope {
 
     public LocalScope(Scope parent) {
         super(Kind.LOCAL);
-        assert parent.isFormalOrLocalScope();
+        assert parent.isLocalScope() || parent.isFormalScope() || parent.isLambdaScope();
         if (parent.isFormalScope()) {
             ((FormalScope) parent).setNested(this);
-        } else {
+        } else if (parent.isLocalScope()) {
             ((LocalScope) parent).nested.add(this);
+        } else {
+            ((LambdaScope) parent).nested = this;
         }
     }
 
@@ -28,9 +30,9 @@ public class LocalScope extends Scope {
      *
      * @return local scopes
      */
-    public List<LocalScope> nestedLocalScopes() {
+    public List<Scope> nestedLocalScopes() {
         return nested;
     }
 
-    private List<LocalScope> nested = new ArrayList<>();
+    private List<Scope> nested = new ArrayList<>();
 }

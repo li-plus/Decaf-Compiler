@@ -3,6 +3,7 @@ package decaf.frontend.symbol;
 import decaf.frontend.scope.ClassScope;
 import decaf.frontend.scope.GlobalScope;
 import decaf.frontend.tree.Pos;
+import decaf.frontend.tree.Tree;
 import decaf.frontend.type.ClassType;
 import decaf.lowlevel.tac.ClassInfo;
 
@@ -23,19 +24,18 @@ public final class ClassSymbol extends Symbol {
      */
     public final ClassScope scope;
 
-    public ClassSymbol(String name, ClassType type, ClassScope scope, Pos pos) {
-        super(name, type, pos);
-        this.parentSymbol = Optional.empty();
-        this.scope = scope;
-        this.type = type;
-        scope.setOwner(this);
+    public final Tree.Modifiers modifiers;
+
+    public ClassSymbol(String name, ClassType type, ClassScope scope, Pos pos, Tree.Modifiers modifiers) {
+        this(name, null, type, scope, pos, modifiers);
     }
 
-    public ClassSymbol(String name, ClassSymbol parentSymbol, ClassType type, ClassScope scope, Pos pos) {
+    public ClassSymbol(String name, ClassSymbol parentSymbol, ClassType type, ClassScope scope, Pos pos, Tree.Modifiers modifiers) {
         super(name, type, pos);
-        this.parentSymbol = Optional.of(parentSymbol);
+        this.parentSymbol = Optional.ofNullable(parentSymbol);
         this.scope = scope;
         this.type = type;
+        this.modifiers = modifiers;
         scope.setOwner(this);
     }
 
@@ -67,7 +67,8 @@ public final class ClassSymbol extends Symbol {
 
     @Override
     protected String str() {
-        return "class " + name + parentSymbol.map(classSymbol -> " : " + classSymbol.name).orElse("");
+        String modStr = (modifiers.isAbstract() ? "ABSTRACT " : "");
+        return modStr + "class " + name + parentSymbol.map(classSymbol -> " : " + classSymbol.name).orElse("");
     }
 
     /**

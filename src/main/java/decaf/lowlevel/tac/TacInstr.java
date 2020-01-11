@@ -111,8 +111,8 @@ public abstract class TacInstr extends PseudoInstr {
      * </pre>
      */
     public static class Assign extends TacInstr {
-        public final Temp dst;
-        public final Temp src;
+        public Temp dst;
+        public Temp src;
 
         public Assign(Temp dst, Temp src) {
             super(new Temp[]{dst}, new Temp[]{src});
@@ -138,7 +138,7 @@ public abstract class TacInstr extends PseudoInstr {
      * </pre>
      */
     public static class LoadVTbl extends TacInstr {
-        public final Temp dst;
+        public Temp dst;
         public final VTable vtbl;
 
         public LoadVTbl(Temp dst, VTable vtbl) {
@@ -165,7 +165,7 @@ public abstract class TacInstr extends PseudoInstr {
      * </pre>
      */
     public static class LoadImm4 extends TacInstr {
-        public final Temp dst;
+        public Temp dst;
         public final int value;
 
         public LoadImm4(Temp dst, int value) {
@@ -192,7 +192,7 @@ public abstract class TacInstr extends PseudoInstr {
      * </pre>
      */
     public static class LoadStrConst extends TacInstr {
-        public final Temp dst;
+        public Temp dst;
         public final String value;
 
         public LoadStrConst(Temp dst, String value) {
@@ -220,8 +220,8 @@ public abstract class TacInstr extends PseudoInstr {
      */
     public static class Unary extends TacInstr {
         public final Op op;
-        public final Temp dst;
-        public final Temp operand;
+        public Temp dst;
+        public Temp operand;
 
         public enum Op {
             NEG, LNOT
@@ -257,9 +257,9 @@ public abstract class TacInstr extends PseudoInstr {
      */
     public static class Binary extends TacInstr {
         public final Op op;
-        public final Temp dst;
-        public final Temp lhs;
-        public final Temp rhs;
+        public Temp dst;
+        public Temp lhs;
+        public Temp rhs;
 
         public enum Op {
             ADD, SUB, MUL, DIV, MOD, EQU, NEQ, LES, LEQ, GTR, GEQ, LAND, LOR
@@ -333,7 +333,7 @@ public abstract class TacInstr extends PseudoInstr {
      */
     public static class CondBranch extends TacInstr {
         public final Op op;
-        public final Temp cond;
+        public Temp cond;
         public final Label target;
 
         public enum Op {
@@ -369,7 +369,7 @@ public abstract class TacInstr extends PseudoInstr {
      * </pre>
      */
     public static class Return extends TacInstr {
-        public final Optional<Temp> value;
+        public Optional<Temp> value;
 
         public Return(Temp value) {
             super(Kind.RET, new Temp[]{}, new Temp[]{value}, null);
@@ -402,7 +402,7 @@ public abstract class TacInstr extends PseudoInstr {
      * </pre>
      */
     public static class Parm extends TacInstr {
-        public final Temp value;
+        public Temp value;
 
         public Parm(Temp value) {
             super(new Temp[]{}, new Temp[]{value});
@@ -427,8 +427,8 @@ public abstract class TacInstr extends PseudoInstr {
      * </pre>
      */
     public static class IndirectCall extends TacInstr {
-        public final Optional<Temp> dst;
-        public final Temp entry;
+        public Optional<Temp> dst;
+        public Temp entry;
 
         public IndirectCall(Temp dst, Temp entry) {
             super(new Temp[]{dst}, new Temp[]{entry});
@@ -463,7 +463,7 @@ public abstract class TacInstr extends PseudoInstr {
      * </pre>
      */
     public static class DirectCall extends TacInstr {
-        public final Optional<Temp> dst;
+        public Optional<Temp> dst;
         public final Label entry;
 
         public DirectCall(Temp dst, Label entry) {
@@ -513,8 +513,8 @@ public abstract class TacInstr extends PseudoInstr {
      */
     public static class Memory extends TacInstr {
         public final Op op;
-        public final Temp dst;
-        public final Temp base;
+        public Temp dst;
+        public Temp base;
         public final int offset;
 
         public enum Op {

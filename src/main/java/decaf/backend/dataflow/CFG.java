@@ -26,7 +26,7 @@ public class CFG<I extends PseudoInstr> implements Iterable<BasicBlock<I>> {
     public final List<Pair<Integer, Integer>> edges;
 
     // fst: prev, snd: succ
-    private List<Pair<Set<Integer>, Set<Integer>>> links;
+    public List<Pair<Set<Integer>, Set<Integer>>> links;
 
     CFG(List<BasicBlock<I>> nodes, List<Pair<Integer, Integer>> edges) {
         this.nodes = nodes;

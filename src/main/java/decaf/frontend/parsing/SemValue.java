@@ -15,7 +15,7 @@ import java.util.List;
 class SemValue {
     enum Kind {
         TOKEN, CLASS, CLASS_LIST, FIELD, FIELD_LIST, VAR, VAR_LIST, TYPE, STMT, STMT_LIST, BLOCK, EXPR, EXPR_LIST,
-        LVALUE, ID, TEMPORARY
+        LVALUE, ID, TEMPORARY, TYPE_LIST
     }
 
     /**
@@ -82,6 +82,7 @@ class SemValue {
     List<Tree.LocalVarDef> varList; // a list can only contain local vars
 
     Tree.TypeLit type;
+    List<Tree.TypeLit> typeList;
 
     Tree.Stmt stmt;
     List<Tree.Stmt> stmtList;
@@ -147,6 +148,7 @@ class SemValue {
             case LVALUE -> "LVALUE: " + lValue;
             case ID -> "ID: " + id;
             case TEMPORARY -> "TEMPORARY";
+            case TYPE_LIST -> "TYPE_LIST: " + typeList;
         };
         return String.format("%-9s%s", pos, msg);
     }

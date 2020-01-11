@@ -25,12 +25,12 @@ public class BasicBlock<I extends PseudoInstr> implements Iterable<Loc<I>> {
         CONTINUOUS, END_BY_JUMP, END_BY_COND_JUMP, END_BY_RETURN
     }
 
-    public final Kind kind;
+    public Kind kind;
 
     /**
      * Block id.
      */
-    public final int id;
+    public int id;
 
     /**
      * Entry label of this block, if any.
@@ -40,7 +40,7 @@ public class BasicBlock<I extends PseudoInstr> implements Iterable<Loc<I>> {
     /**
      * List of locations (i.e. instructions with liveness info).
      */
-    public final List<Loc<I>> locs;
+    public List<Loc<I>> locs;
 
     public BasicBlock(Kind kind, int id, Optional<Label> label, List<Loc<I>> locs) {
         this.kind = kind;
@@ -106,4 +106,10 @@ public class BasicBlock<I extends PseudoInstr> implements Iterable<Loc<I>> {
     public Set<Temp> liveIn;
 
     public Set<Temp> liveOut;
+
+    // For forward dataflow analysis
+    public Set<Object> in;
+    public Set<Object> out;
+    public Set<Object> gen;
+    public Set<Object> kill;
 }

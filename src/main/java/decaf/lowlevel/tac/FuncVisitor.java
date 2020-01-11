@@ -223,6 +223,23 @@ public class FuncVisitor {
         visitMemberCall(object, clazz, method, args, false);
     }
 
+    public Temp visitNonMemberCall(Temp object, List<Temp> args, boolean needReturn) {
+        Temp temp = null;
+        var entry = visitLoadFrom(object);
+
+        func.add(new TacInstr.Parm(object));
+        for (var arg : args) {
+            func.add(new TacInstr.Parm(arg));
+        }
+        if (needReturn) {
+            temp = freshTemp();
+            func.add(new TacInstr.IndirectCall(temp, entry));
+        } else {
+            func.add(new TacInstr.IndirectCall(entry));
+        }
+        return temp;
+    }
+
     /**
      * Append instructions to invoke a static method.
      *
@@ -423,9 +440,13 @@ public class FuncVisitor {
         }
     }
 
+    public String className() {
+        return func.entry.clazz;
+    }
+
     private TacFunc func;
 
-    private ProgramWriter.Context ctx;
+    public ProgramWriter.Context ctx;
 
     private int nextTempId = 0;
 

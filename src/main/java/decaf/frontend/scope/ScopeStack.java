@@ -1,6 +1,7 @@
 package decaf.frontend.scope;
 
 import decaf.frontend.symbol.ClassSymbol;
+import decaf.frontend.symbol.LambdaSymbol;
 import decaf.frontend.symbol.MethodSymbol;
 import decaf.frontend.symbol.Symbol;
 import decaf.frontend.tree.Pos;
@@ -70,6 +71,14 @@ public class ScopeStack {
         return currMethod;
     }
 
+    public Optional<LambdaSymbol> currentLambda() {
+        if (lambdaScopeStack.isEmpty()) {
+            return Optional.empty();
+        } else {
+            return Optional.of(lambdaScopeStack.peek().owner);
+        }
+    }
+
     /**
      * Open a scope.
      * <p>
@@ -89,6 +98,9 @@ public class ScopeStack {
         } else if (scope.isFormalScope()) {
             var formalScope = (FormalScope) scope;
             currMethod = formalScope.getOwner();
+        } else if (scope.isLambdaScope()) {
+            var lambdaScope = (LambdaScope) scope;
+            lambdaScopeStack.push(lambdaScope);
         }
         scopeStack.push(scope);
     }
@@ -106,6 +118,10 @@ public class ScopeStack {
         if (scope.isClassScope()) {
             while (!scopeStack.isEmpty()) {
                 scopeStack.pop();
+            }
+        } else if (scope.isLambdaScope()) {
+            if (!lambdaScopeStack.isEmpty()) {
+                lambdaScopeStack.pop();
             }
         }
     }
@@ -129,7 +145,7 @@ public class ScopeStack {
      * @return innermost found symbol before {@code pos} (if any)
      */
     public Optional<Symbol> lookupBefore(String key, Pos pos) {
-        return findWhile(key, whatever -> true, s -> !(s.domain().isLocalScope() && s.pos.compareTo(pos) >= 0));
+        return findWhile(key, whatever -> true, s -> !((s.domain().isLocalScope() || s.domain().isLambdaScope()) && s.pos.compareTo(pos) >= 0));
     }
 
     /**
@@ -146,8 +162,9 @@ public class ScopeStack {
      * @return innermost conflicting symbol (if any)
      */
     public Optional<Symbol> findConflict(String key) {
-        if (currentScope().isFormalOrLocalScope())
-            return findWhile(key, Scope::isFormalOrLocalScope, whatever -> true).or(() -> global.find(key));
+        if (currentScope().isLocalScope() || currentScope().isFormalScope() || currentScope().isLambdaScope())
+            return findWhile(key, (Scope x) -> x.isLambdaScope() || x.isFormalScope() || x.isLocalScope(), whatever -> true)
+                    .or(() -> global.find(key));
         return lookup(key);
     }
 
@@ -192,6 +209,7 @@ public class ScopeStack {
     }
 
     private Stack<Scope> scopeStack = new Stack<>();
+    public Stack<LambdaScope> lambdaScopeStack = new Stack<>();
     private ClassSymbol currClass;
     private MethodSymbol currMethod;
 
